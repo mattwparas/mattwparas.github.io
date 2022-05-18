@@ -1,0 +1,3 @@
+[submodule "themes/oceanic-zen"]
+	path = themes/oceanic-zen
+	url = git@github.com:barlog-m/oceanic-zen.git
