@@ -1,6 +1,6 @@
 +++
 title = "Implementing higher order contracts"
-date = 2020-01-22
+date = 2022-05-18
 +++
 
 In college I spent some time working on the internals of the [Racket contract system](https://docs.racket-lang.org/guide/contract-boundaries.html), and at the time I understood very little about it beyond reading the documentation.
@@ -82,5 +82,115 @@ addition: broke its own contract
 
 This is great! We made a mistake in our implementation, and the contract system reported our error, and in fact, blamed _us_ for making a mistake.
 
+## Introducing higher order contracts
+
+In the previous example, we were using predicates that could immediately be checked when a function is called and when it returns. But what if you have functions as arguments? Take this for example:
+
+```racket
+(define/contract (custom-map func collection)
+    (-> (-> integer? integer?) (listof integer?) (listof integer?))
+    (map func collection))
+```
+
+Here we have a function contract as a precondition for another function contract - This binds `func` to be a function that accepts and returns values which satisfy the `integer?` predicate - and also we require that the collection we pass in is in fact a list of `integer?` - by extension, the resulting value is also a list of `integer?`.
+
+What are the implications of this? Well, it means we can't actually check the contract on the function until its applied. This changes how blame is applied, and requires keeping a history of the contracts that are applied to a function:
+
+```racket
+;; Higher order contracts, check on application
+(define/contract (higher-order func y)
+    (->/c (->/c even? odd?) even? even?)
+    (+ 1 (func y)))
+
+(higher-order (lambda (x) (+ x 1)) 2) ;; => 4
+
+(define/contract (higher-order-violation func y)
+    (->/c (->/c even? odd?) even? even?)
+    (+ 1 (func y)))
+
+(higher-order-violation (lambda (x) (+ x 2)) 2) ;; contract violation
+```
+
+Contracts on functions do not get checked until they are applied, so a function returning a _contracted_ function won't cause a violation until that function is actually used:
+
+```racket
+;; More higher order contracts, get checked on application
+(define/contract (output)
+    (-> (-> string? int?))
+    (lambda (x) 10))
+
+(define/contract (accept func)
+    (-> (-> string? int?) string?)
+    "cool cool cool")
+
+(accept (output)) ;; => "cool cool cool"
+
+;; different contracts on the argument
+(define/contract (accept-violation func)
+    (-> (-> string? string?) string?)
+    (func "applesauce")
+    "cool cool cool")
+
+(accept-violation (output)) ;; contract violation
+
+;; generates a function
+(define/contract (generate-closure)
+    (-> (-> string? int?))
+    (lambda (x) 10))
+
+;; calls generate-closure which should result in a contract violation
+(define/contract (accept-violation)
+    (-> (-> string? string?))
+    (generate-closure))
+
+((accept-violation) "test") ;; contract violation
+```
+
+Perhaps a more nuanced case:
+
+```racket
+(define/contract (output)
+    (-> (-> string? int?))
+    (lambda (x) 10.2))
+
+(define/contract (accept)
+    (-> (-> string? number?))
+    (output))
+
+
+((accept) "test") ;; contract violation 10.2 satisfies number? but _not_ int?
+```
+
+
 ## Details
+
+For the sake of this post, we'll talk about two kinds of contracts: `Flat` and `Function` contracts.
+
+`Flat` contracts are simply predicates on values with no children - meaning they're equivalent to `Atoms` in a scheme implementation.
+
+`Function` contracts are contracts bound to a function - they have preconditions and postconditions, which are contracts themselves. This grammar would look something like this in Rust:
+
+```rust
+struct Function {
+    ...
+}
+
+enum Contract {
+    Flat(Function)
+    Function({
+        pre_conditions: Vec<Contract>,
+        post_condition: Box<Contract>
+    })
+}
+```
+
+And the equivalent construction in scheme using the `->` constructor for function contracts:
+
+```racket
+(-> predicate? predicate? predicate?)
+    ^^^^^^^^^^^^^^^^^^^^  ^^^^
+    pre conditions        post condition
+```
+
+At this point, we're setting up a tree - internal nodes are `Contract::Function`s and leaf nodes are `Contract::Flat`.
 
