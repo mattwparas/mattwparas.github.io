@@ -171,6 +171,7 @@ For the sake of this post, we'll talk about two kinds of contracts: `Flat` and `
 `Function` contracts are contracts bound to a function - they have preconditions and postconditions, which are contracts themselves. This grammar would look something like this in Rust:
 
 ```rust
+// Runtime representation of a function
 struct Function {
     ...
 }
@@ -192,5 +193,33 @@ And the equivalent construction in scheme using the `->` constructor for functio
     pre conditions        post condition
 ```
 
-At this point, we're setting up a tree - internal nodes are `Contract::Function`s and leaf nodes are `Contract::Flat`.
+At this point, we're setting up a tree, where internal nodes are `Contract::Function`'s and leaf nodes are `Contract::Flat`. If you take a close look its akin to a classic cons list, where you have either a list or an atom. The list is analagous to a function, and the atoms are flat contracts, contracts that are bound to a singular value, not a function.
+
+So now we've decided that at runtime, we're going to represent these contracts as values. When you go to apply a contracted function, it is going to do a little bit more work than the usual function call, take this for example:
+
+```racket
+(define/contract (add2 x y)
+    (-> even? odd? odd?)
+    (+ x y))
+
+(add2 10 20) ;; => 30
+
+```
+
+When you apply `add2`, the runtime needs to do a bit more checking than usual - its going to apply the contracts that you've given, so in this case it has to call `(even? x)` and `(odd? y)` and make sure that they hold true. Its akin to something like this:
+
+```racket
+(define (add2 x y)
+    (unless (even? x) 
+        (error! "Contract violation, x was required to be even"))
+    (unless (even? y)
+        (error! "Contract violation, y was required to be even"))
+    
+    (let ((result (+ x y)))
+        (unless (odd? result)
+            (error! "Contract violation, the add2 expected the result to be odd?"))
+        result))
+```
+
+
 
