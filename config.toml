@@ -1,5 +1,5 @@
 # The URL the site will be built for
-base_url = "https://mattwparas.github.io.com"
+base_url = "https://mattwparas.github.io"
 title = "Matthew Paras"
 theme = "oceanic-zen"
 
