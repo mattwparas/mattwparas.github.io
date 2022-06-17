@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://mattwparas.github.io/sitemap.xml
