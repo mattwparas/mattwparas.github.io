@@ -1,6 +1,6 @@
 +++
-title = "Implementing higher order contracts"
-date = 2022-05-18
+(title "Implementing higher order contracts")
+(date "2022-05-18")
 +++
 
 In college I spent some time working on the internals of the [Racket contract system](https://docs.racket-lang.org/guide/contract-boundaries.html), and at the time I understood very little about it beyond reading the documentation.

@@ -1,6 +1,6 @@
 +++
-title = "Projects"
-weight = 99
+(title "Projects")
+(weight 50)
 +++
 
 [Steel](https://github.com/mattwparas/steel) - a scheme dialect

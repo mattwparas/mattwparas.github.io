@@ -1,6 +1,6 @@
 +++
-title = "About"
-weight = 99
+(title "About")
+(weight 99)
 +++
 
 I'm a software engineer at The Trade Desk, working on ML ops and improving development practices
