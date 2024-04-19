@@ -16,8 +16,10 @@
 
 (define (mdstring->html-highlighted-string contents)
   (let ([output (open-output-string)])
-    (define parser (parser contents))
-    (let loop ([mdparser parser] [sink output] [language #f])
+    ;; When this is named `parser` - shadowing the global, the compiler is unhappy.
+    ;; This is now fixed
+    (define found-parser (parser contents))
+    (let loop ([mdparser found-parser] [sink output] [language #f])
       (define next (parser-next mdparser))
       (when next
         (define start-language (event->start-code-block-label next))
@@ -439,7 +441,18 @@
                  Ok->value)
              output-file)))
 
-(define (main)
+(define (generate-404-not-found)
+  (define result
+    (html->string
+     (top-level-page-template *url-root* "Matthew Paras" "404 Not Found" '() "404 Not Found")))
+  (let ([sink (open-output-file (string-append *build-output* "/404.html"))]) (display result sink)))
+
+(provide main)
+(define (main #:root-url [root-url #f])
+
+  (when root-url
+    (set! *url-root* root-url))
+
   (log/info! "Generating html files")
   (generate-files "content")
   (log/info! "Compiling sass files")
@@ -450,6 +463,9 @@
   (generate-robots.txt)
   (log/info! "Generating sitemap.xml")
   (generate-sitemap.xml)
+  (log/info! "Generating 404.html")
+  (generate-404-not-found)
   (log/info! "Finished"))
 
-(main)
+;; Run it
+; (main)

@@ -146,38 +146,38 @@
       #f))
 
 ;; TODO: Add more languages, and make this mapping... make a bit more sense.
-(define highlighter-map
-  (hash "bash" "Bourne Again Shell (bash)" "scheme" "Lisp" "racket" "Lisp" "rust" "Rust"))
+; (define highlighter-map
+;   (hash "bash" "Bourne Again Shell (bash)" "scheme" "Lisp" "racket" "Lisp" "rust" "Rust"))
 
-(define (mdfile->html-highlighted-string highlighter path)
-  (define contents (file->string path))
-  (md-string->html-highlighted-string highlighter contents))
+; (define (mdfile->html-highlighted-string highlighter path)
+;   (define contents (file->string path))
+;   (md-string->html-highlighted-string highlighter contents))
 
-(define (md-string->html-highlighted-string highlighter contents)
-  (let ([output (open-output-string)])
-    (define parser (parser contents))
-    (let loop ([mdparser parser] [sink output] [language #f])
-      (define next (parser-next mdparser))
-      ; (displayln language)
-      (when next
-        (define start-language (event->start-code-block-label next))
-        (define end-language (event->end-code-block-label next))
+; (define (md-string->html-highlighted-string highlighter contents)
+;   (let ([output (open-output-string)])
+;     (define parser (parser contents))
+;     (let loop ([mdparser parser] [sink output] [language #f])
+;       (define next (parser-next mdparser))
+;       ; (displayln language)
+;       (when next
+;         (define start-language (event->start-code-block-label next))
+;         (define end-language (event->end-code-block-label next))
 
-        ;; If we have a language, then we use that to highlight the text
-        ;; on the inner code block, and emit html there.
-        (when (and language (event-text? next))
-          ; (displayln "Highlighting language!" language)
-          (set-event-as-html! next
-                              (syntax-highlighter/text->highlighted-html highlighter
-                                                                         (hash-ref highlighter-map
-                                                                                   language)
-                                                                         (event->text next))))
+;         ;; If we have a language, then we use that to highlight the text
+;         ;; on the inner code block, and emit html there.
+;         (when (and language (event-text? next))
+;           ; (displayln "Highlighting language!" language)
+;           (set-event-as-html! next
+;                               (syntax-highlighter/text->highlighted-html highlighter
+;                                                                          (hash-ref highlighter-map
+;                                                                                    language)
+;                                                                          (event->text next))))
 
-        ;; Write the event as an html string
-        (display (event->html-string next) sink)
-        (loop mdparser sink (if end-language #f (or start-language language)))))
+;         ;; Write the event as an html string
+;         (display (event->html-string next) sink)
+;         (loop mdparser sink (if end-language #f (or start-language language)))))
 
-    (get-output-string output)))
+;     (get-output-string output)))
 
 ; mdfile->html-string "README.md")
 
