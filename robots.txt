@@ -1,3 +1,3 @@
 User-agent: *
 Allow: /
-Sitemapfile:///home/matt/Documents/website/mattwparas.github.io/_output/sitemap.xml
+Sitemaphttps://mattwparas.github.io/sitemap.xml
