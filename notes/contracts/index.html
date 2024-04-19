@@ -1,0 +1,168 @@
+<html lang="en" ><head><meta charset="utf-8" ></meta><meta name="viewport" content="width=device-width, initial-scale=1" ></meta><title>Matthew Paras</title><link rel="stylesheet" href="file:///home/matt/Documents/website/mattwparas.github.io/_output/theme.css" ></link></head><body><div class="content" ><header><div class="header-left" ><a href="file:///home/matt/Documents/website/mattwparas.github.io/_output/index.html" class="logo" >Matthew Paras</a></div><div class="header-right" ><nav itemscope itemtype="http://schema.org/SiteNavigationElement" ><ul><li class="nav" ><a itemprop="url" href="file:///home/matt/Documents/website/mattwparas.github.io/_output/notes/index.html" ><span itemprop="name" > Notes </span></a></li><li class="nav" ><a itemprop="url" href="file:///home/matt/Documents/website/mattwparas.github.io/_output/projects/index.html" ><span itemprop="name" > Projects </span></a></li><li class="nav" ><a itemprop="url" href="file:///home/matt/Documents/website/mattwparas.github.io/_output/about/index.html" ><span itemprop="name" > About </span></a></li><li class="nav" ><a itemprop="url" href="https://github.com/mattwparas" ><img class="icon" src="file:///home/matt/Documents/website/mattwparas.github.io/_output//icons/github.svg" alt="Github" ></img></a></li></ul></nav></div></header><main><article itemscope itemtype="http://schema.org/BlogPosting" ><div itemprop="headline" ><h1>Implementing higher order contracts</h1><div class="border" ></div><time datetime="2024-04-14" class="date" itemprop="datePublished" ></time></div><div itemprop="articleBody" ><p>In college I spent some time working on the internals of the <a href="https://docs.racket-lang.org/guide/contract-boundaries.html">Racket contract system</a>, and at the time I understood very little about it beyond reading the documentation.</p>
+<p>Around that same time, I had started implementing <a href="https://github.com/mattwparas/steel">Steel</a>, which is an embedded scheme in Rust. Eventually, I was inspired to add contracts as a fundamental part of Steel, both as a quest to improve
+the experience of writing Steel code, and also to gain a deeper understanding of contrats and how <em>blame</em> is assigned when contract violations occur.</p>
+<p>Before we begin, I’ll briefly summarize contracts in Racket and how you use them (if you truly want a better understanding, I would read the Racket <a href="https://docs.racket-lang.org/guide/contract-boundaries.html">guide</a>), before diving in to implementing them in Steel.</p>
+<h2>Contract Basics</h2>
+<p>If you’ve ever used a language with a static type system, than you’ve already interacted with simple contracts before - they check the types of the arguments at compile time. In Racket, this would look something like this:</p>
+<pre><code class="language-racket"><pre style="background-color:#2b303b;">
+<span style="color:#65737e;">;; Without contracts
+</span><span style="color:#c0c5ce;">(define (addition x y)
+</span><span style="color:#c0c5ce;">    (+ x y))
+</span><span style="color:#c0c5ce;">
+</span><span style="color:#65737e;">;; With a contract
+</span><span style="color:#c0c5ce;">(define/contract (addition x y)
+</span><span style="color:#c0c5ce;">    </span><span style="color:#65737e;">;; This is the function contract
+</span><span style="color:#c0c5ce;">    (-&gt; integer? integer? integer?) 
+</span><span style="color:#c0c5ce;">    </span><span style="color:#65737e;">;;  ^^^ x    ^^^ y    ^^^ return predicate
+</span><span style="color:#c0c5ce;">    (+ x y))
+</span></pre>
+</code></pre>
+<p>Each position in the contract is a corresponding predicate that will get checked when the function is called. In this case, <code>x</code> and <code>y</code> are required to be <code>integer?</code>s, and we’re also asserting that the return value will satisfy the contract <code>integer?</code> as well.</p>
+<p>This is trivial by inspection - we know that as long as the input arguments are integers, the result will be an integer since we’re just adding them.</p>
+<p>What happens if we make an error calling the function?</p>
+<pre><code class="language-racket"><pre style="background-color:#2b303b;">
+<span style="color:#c0c5ce;">Welcome to Racket v8.4 [cs].
+</span><span style="color:#c0c5ce;">&gt; (define/contract (addition x y)
+</span><span style="color:#c0c5ce;">      (-&gt; integer? integer? integer?) 
+</span><span style="color:#c0c5ce;">      (+ x y))
+</span><span style="color:#c0c5ce;">&gt; (addition </span><span style="color:#d08770;">10.1 11</span><span style="color:#c0c5ce;">)
+</span><span style="color:#c0c5ce;">addition: contract violation
+</span><span style="color:#c0c5ce;">  expected: integer?
+</span><span style="color:#c0c5ce;">  given: 10.1
+</span><span style="color:#c0c5ce;">  in: the 1st argument of
+</span><span style="color:#c0c5ce;">      (-&gt; integer? integer? integer?)
+</span><span style="color:#c0c5ce;">  contract from: (function addition)
+</span><span style="color:#c0c5ce;">  blaming: top-level
+</span><span style="color:#c0c5ce;">   (assuming the contract is correct)
+</span><span style="color:#c0c5ce;">  at: string:1:18
+</span><span style="color:#c0c5ce;"> [,bt for context]
+</span></pre>
+</code></pre>
+<p>Perfect - the contract system blames the call site, since the caller broke the contract, they’re blamed.
+But now - what happens if there is an error in our implementation? Take this for example:</p>
+<pre><code class="language-racket"><pre style="background-color:#2b303b;">
+<span style="color:#c0c5ce;">(define/contract (addition x y)
+</span><span style="color:#c0c5ce;">    (-&gt; integer? integer? integer?) 
+</span><span style="color:#c0c5ce;">    (+ x y </span><span style="color:#d08770;">0.1</span><span style="color:#c0c5ce;">))
+</span></pre>
+</code></pre>
+<p>Here the return type will be coerced to a float, and as a result the contract itself is actually incorrect - the contract system will detect this at run time and report the error like so:</p>
+<pre><code class="language-racket"><pre style="background-color:#2b303b;">
+<span style="color:#c0c5ce;">Welcome to Racket v8.4 [cs].
+</span><span style="color:#c0c5ce;">&gt; (define/contract (addition x y)
+</span><span style="color:#c0c5ce;">      (-&gt; integer? integer? integer?) 
+</span><span style="color:#c0c5ce;">      (+ x y </span><span style="color:#d08770;">0.1</span><span style="color:#c0c5ce;">))
+</span><span style="color:#c0c5ce;">&gt; (addition </span><span style="color:#d08770;">10 20</span><span style="color:#c0c5ce;">)
+</span><span style="color:#c0c5ce;">addition: broke its own contract
+</span><span style="color:#c0c5ce;">  promised: integer?
+</span><span style="color:#c0c5ce;">  produced: 30.1
+</span><span style="color:#c0c5ce;">  in: the range of
+</span><span style="color:#c0c5ce;">      (-&gt; integer? integer? integer?)
+</span><span style="color:#c0c5ce;">  contract from: (function addition)
+</span><span style="color:#c0c5ce;">  blaming: (function addition)
+</span><span style="color:#c0c5ce;">   (assuming the contract is correct)
+</span><span style="color:#c0c5ce;">  at: string:1:18
+</span><span style="color:#c0c5ce;"> [,bt for context]
+</span></pre>
+</code></pre>
+<p>This is great! We made a mistake in our implementation, and the contract system reported our error, and in fact, blamed <em>us</em> for making a mistake.</p>
+<h2>Introducing higher order contracts</h2>
+<p>In the previous example, we were using predicates that could immediately be checked when a function is called and when it returns. But what if you have functions as arguments? Take this for example:</p>
+<pre><code class="language-racket"><pre style="background-color:#2b303b;">
+<span style="color:#c0c5ce;">(define/contract (custom-</span><span style="color:#96b5b4;">map</span><span style="color:#c0c5ce;"> func collection)
+</span><span style="color:#c0c5ce;">    (-&gt; (-&gt; integer? integer?) (listof integer?) (listof integer?))
+</span><span style="color:#c0c5ce;">    (</span><span style="color:#96b5b4;">map</span><span style="color:#c0c5ce;"> func collection))
+</span></pre>
+</code></pre>
+<p>Here we have a function contract as a precondition for another function contract - This binds <code>func</code> to be a function that accepts and returns values which satisfy the <code>integer?</code> predicate - and also we require that the collection we pass in is in fact a list of <code>integer?</code> - by extension, the resulting value is also a list of <code>integer?</code>.</p>
+<p>What are the implications of this? Well, it means we can’t actually check the contract on the function until its applied. This changes how blame is applied, and requires keeping a history of the contracts that are applied to a function:</p>
+<pre><code class="language-racket"><pre style="background-color:#2b303b;">
+<span style="color:#65737e;">;; Higher order contracts, check on application
+</span><span style="color:#c0c5ce;">(define/contract (higher-order func y)
+</span><span style="color:#c0c5ce;">    (-&gt;/c (-&gt;/c even? odd?) even? even?)
+</span><span style="color:#c0c5ce;">    (+ </span><span style="color:#d08770;">1 </span><span style="color:#c0c5ce;">(func y)))
+</span><span style="color:#c0c5ce;">
+</span><span style="color:#c0c5ce;">(higher-order (</span><span style="color:#96b5b4;">lambda </span><span style="color:#c0c5ce;">(x) (+ x </span><span style="color:#d08770;">1</span><span style="color:#c0c5ce;">)) </span><span style="color:#d08770;">2</span><span style="color:#c0c5ce;">) </span><span style="color:#65737e;">;; =&gt; 4
+</span><span style="color:#c0c5ce;">
+</span><span style="color:#c0c5ce;">(define/contract (higher-order-violation func y)
+</span><span style="color:#c0c5ce;">    (-&gt;/c (-&gt;/c even? odd?) even? even?)
+</span><span style="color:#c0c5ce;">    (+ </span><span style="color:#d08770;">1 </span><span style="color:#c0c5ce;">(func y)))
+</span><span style="color:#c0c5ce;">
+</span><span style="color:#c0c5ce;">(higher-order-violation (</span><span style="color:#96b5b4;">lambda </span><span style="color:#c0c5ce;">(x) (+ x </span><span style="color:#d08770;">2</span><span style="color:#c0c5ce;">)) </span><span style="color:#d08770;">2</span><span style="color:#c0c5ce;">) </span><span style="color:#65737e;">;; contract violation
+</span></pre>
+</code></pre>
+<p>Contracts on functions do not get checked until they are applied, so a function returning a <em>contracted</em> function won’t cause a violation until that function is actually used:</p>
+<pre><code class="language-racket"><pre style="background-color:#2b303b;">
+<span style="color:#65737e;">;; More higher order contracts, get checked on application
+</span><span style="color:#c0c5ce;">(define/contract (output)
+</span><span style="color:#c0c5ce;">    (-&gt; (-&gt; </span><span style="color:#96b5b4;">string</span><span style="color:#c0c5ce;">? int?))
+</span><span style="color:#c0c5ce;">    (</span><span style="color:#96b5b4;">lambda </span><span style="color:#c0c5ce;">(x) </span><span style="color:#d08770;">10</span><span style="color:#c0c5ce;">))
+</span><span style="color:#c0c5ce;">
+</span><span style="color:#c0c5ce;">(define/contract (accept func)
+</span><span style="color:#c0c5ce;">    (-&gt; (-&gt; </span><span style="color:#96b5b4;">string</span><span style="color:#c0c5ce;">? int?) </span><span style="color:#96b5b4;">string</span><span style="color:#c0c5ce;">?)
+</span><span style="color:#c0c5ce;">    &quot;</span><span style="color:#a3be8c;">cool cool cool</span><span style="color:#c0c5ce;">&quot;)
+</span><span style="color:#c0c5ce;">
+</span><span style="color:#c0c5ce;">(accept (output)) </span><span style="color:#65737e;">;; =&gt; &quot;cool cool cool&quot;
+</span><span style="color:#c0c5ce;">
+</span><span style="color:#65737e;">;; different contracts on the argument
+</span><span style="color:#c0c5ce;">(define/contract (accept-violation func)
+</span><span style="color:#c0c5ce;">    (-&gt; (-&gt; </span><span style="color:#96b5b4;">string</span><span style="color:#c0c5ce;">? </span><span style="color:#96b5b4;">string</span><span style="color:#c0c5ce;">?) </span><span style="color:#96b5b4;">string</span><span style="color:#c0c5ce;">?)
+</span><span style="color:#c0c5ce;">    (func &quot;</span><span style="color:#a3be8c;">applesauce</span><span style="color:#c0c5ce;">&quot;)
+</span><span style="color:#c0c5ce;">    &quot;</span><span style="color:#a3be8c;">cool cool cool</span><span style="color:#c0c5ce;">&quot;)
+</span><span style="color:#c0c5ce;">
+</span><span style="color:#c0c5ce;">(accept-violation (output)) </span><span style="color:#65737e;">;; contract violation
+</span><span style="color:#c0c5ce;">
+</span><span style="color:#65737e;">;; generates a function
+</span><span style="color:#c0c5ce;">(define/contract (generate-closure)
+</span><span style="color:#c0c5ce;">    (-&gt; (-&gt; </span><span style="color:#96b5b4;">string</span><span style="color:#c0c5ce;">? int?))
+</span><span style="color:#c0c5ce;">    (</span><span style="color:#96b5b4;">lambda </span><span style="color:#c0c5ce;">(x) </span><span style="color:#d08770;">10</span><span style="color:#c0c5ce;">))
+</span><span style="color:#c0c5ce;">
+</span><span style="color:#65737e;">;; calls generate-closure which should result in a contract violation
+</span><span style="color:#c0c5ce;">(define/contract (accept-violation)
+</span><span style="color:#c0c5ce;">    (-&gt; (-&gt; </span><span style="color:#96b5b4;">string</span><span style="color:#c0c5ce;">? </span><span style="color:#96b5b4;">string</span><span style="color:#c0c5ce;">?))
+</span><span style="color:#c0c5ce;">    (generate-closure))
+</span><span style="color:#c0c5ce;">
+</span><span style="color:#c0c5ce;">((accept-violation) &quot;</span><span style="color:#a3be8c;">test</span><span style="color:#c0c5ce;">&quot;) </span><span style="color:#65737e;">;; contract violation
+</span></pre>
+</code></pre>
+<p>Perhaps a more nuanced case:</p>
+<pre><code class="language-racket"><pre style="background-color:#2b303b;">
+<span style="color:#c0c5ce;">(define/contract (output)
+</span><span style="color:#c0c5ce;">    (-&gt; (-&gt; </span><span style="color:#96b5b4;">string</span><span style="color:#c0c5ce;">? int?))
+</span><span style="color:#c0c5ce;">    (</span><span style="color:#96b5b4;">lambda </span><span style="color:#c0c5ce;">(x) </span><span style="color:#d08770;">10.2</span><span style="color:#c0c5ce;">))
+</span><span style="color:#c0c5ce;">
+</span><span style="color:#c0c5ce;">(define/contract (accept)
+</span><span style="color:#c0c5ce;">    (-&gt; (-&gt; </span><span style="color:#96b5b4;">string</span><span style="color:#c0c5ce;">? number?))
+</span><span style="color:#c0c5ce;">    (output))
+</span><span style="color:#c0c5ce;">
+</span><span style="color:#c0c5ce;">
+</span><span style="color:#c0c5ce;">((accept) &quot;</span><span style="color:#a3be8c;">test</span><span style="color:#c0c5ce;">&quot;) </span><span style="color:#65737e;">;; contract violation 10.2 satisfies number? but _not_ int?
+</span></pre>
+</code></pre>
+<h2>Details</h2>
+<p>For the sake of this post, we’ll talk about two kinds of contracts: <code>Flat</code> and <code>Function</code> contracts.</p>
+<p><code>Flat</code> contracts are simply predicates on values with no children - meaning they’re equivalent to <code>Atoms</code> in a scheme implementation.</p>
+<p><code>Function</code> contracts are contracts bound to a function - they have preconditions and postconditions, which are contracts themselves. This grammar would look something like this in Rust:</p>
+<pre><code class="language-rust"><pre style="background-color:#2b303b;">
+<span style="color:#b48ead;">struct </span><span style="color:#c0c5ce;">Function {
+</span><span style="color:#c0c5ce;">    ...
+</span><span style="color:#c0c5ce;">}
+</span><span style="color:#c0c5ce;">
+</span><span style="color:#b48ead;">enum </span><span style="color:#c0c5ce;">Contract {
+</span><span style="color:#c0c5ce;">    Flat(Function)
+</span><span style="color:#c0c5ce;">    Function({
+</span><span style="color:#c0c5ce;">        pre_conditions: Vec&lt;Contract&gt;,
+</span><span style="color:#c0c5ce;">        post_condition: Box&lt;Contract&gt;
+</span><span style="color:#c0c5ce;">    })
+</span><span style="color:#c0c5ce;">}
+</span></pre>
+</code></pre>
+<p>And the equivalent construction in scheme using the <code>-&gt;</code> constructor for function contracts:</p>
+<pre><code class="language-racket"><pre style="background-color:#2b303b;">
+<span style="color:#c0c5ce;">(-&gt; predicate? predicate? predicate?)
+</span><span style="color:#c0c5ce;">    ^^^^^^^^^^^^^^^^^^^^  ^^^^
+</span><span style="color:#c0c5ce;">    pre conditions        post condition
+</span></pre>
+</code></pre>
+<p>At this point, we’re setting up a tree - internal nodes are <code>Contract::Function</code>s and leaf nodes are <code>Contract::Flat</code>.</p>
+</div></article></main><footer><div class="border" ></div><div class="footer" ><small class="footer-left" >Copyright &copy; Matthew Paras</small><small class="footer-right" > Powered by <a href="https://github.com/mattwparas/steel" >Steel</a></small></div></footer></div></body></html>
